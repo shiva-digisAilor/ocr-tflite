@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
-import { Upload, Image as ImageIcon } from 'lucide-react';
+import { Upload, Image as ImageIcon, FileText } from 'lucide-react';
 
-const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/pdf'];
 const MAX_FILE_SIZE_MB = 10;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
@@ -13,13 +13,13 @@ export default function ImageUploader({ onImageSelected, onError }) {
     if (!file) return;
 
     if (!ALLOWED_TYPES.includes(file.type.toLowerCase())) {
-      onError(`Unsupported file format. Please upload JPG, PNG, JPEG, or WEBP.`);
+      onError(`Unsupported file format. Please upload JPG, PNG, JPEG, WEBP, or PDF.`);
       return;
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
       const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      onError(`Image is too large. Maximum file size is ${MAX_FILE_SIZE_MB}MB.`);
+      onError(`File is too large. Maximum file size is ${MAX_FILE_SIZE_MB}MB.`);
       return;
     }
 
@@ -66,7 +66,7 @@ export default function ImageUploader({ onImageSelected, onError }) {
           type="file"
           ref={fileInputRef}
           onChange={handleFileInputChange}
-          accept=".jpg,.jpeg,.png,.webp"
+          accept=".jpg,.jpeg,.png,.webp,.pdf"
           style={{ display: 'none' }}
         />
 
@@ -77,9 +77,9 @@ export default function ImageUploader({ onImageSelected, onError }) {
           </div>
         </div>
 
-        <h2 className="upload-heading">Drop your image here</h2>
+        <h2 className="upload-heading">Drop your image or PDF here</h2>
         <p className="upload-description">
-          Upload an image and we'll extract the text for you.
+          Upload an image or PDF and we'll extract the text for you.
         </p>
 
         <button
@@ -88,11 +88,11 @@ export default function ImageUploader({ onImageSelected, onError }) {
           onClick={() => fileInputRef.current?.click()}
         >
           <ImageIcon size={20} />
-          Upload Image
+          Upload File
         </button>
 
         <div className="upload-formats">
-          <span>JPG · JPEG · PNG · WEBP</span>
+          <span>JPG · JPEG · PNG · WEBP · PDF</span>
           <span className="format-divider">•</span>
           <span>Max 10 MB</span>
         </div>
