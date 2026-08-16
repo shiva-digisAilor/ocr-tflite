@@ -1,16 +1,16 @@
 import React from 'react';
-import { FileText, Settings, CircleUser } from 'lucide-react';
+import { FileText } from 'lucide-react';
 
 export default function Navbar() {
   return (
     <nav className="navbar">
       <div className="navbar-container">
         {/* Left: Logo */}
-        <div className="navbar-brand">
+          <div className="navbar-brand">
           <div className="navbar-icon">
             <FileText size={20} />
           </div>
-          <span className="navbar-title">OCR Studio</span>
+          <span className="navbar-title">Img to Txt</span>
         </div>
 
         {/* Center: Navigation */}
@@ -19,15 +19,8 @@ export default function Navbar() {
           <button className="nav-link">History</button>
         </div>
 
-        {/* Right: Settings & Profile */}
-        <div className="navbar-right">
-          <button className="nav-icon-button" title="Settings">
-            <Settings size={18} />
-          </button>
-          <button className="nav-avatar" title="Profile">
-            <CircleUser size={20} />
-          </button>
-        </div>
+        {/* Right: (removed Settings & Profile buttons) */}
+        <div className="navbar-right" />
       </div>
     </nav>
   );
