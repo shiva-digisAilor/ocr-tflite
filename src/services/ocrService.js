@@ -1,30 +1,16 @@
 import Tesseract from "tesseract.js";
 
 /**
- * OCR Service Module — Tesseract.js backend, with image preprocessing.
+ * OCR Service Module — Tesseract.js backend, with adaptive-threshold
+ * preprocessing (a step up from plain contrast stretching).
  *
  * Public contract unchanged: recognizeText(imageSource, { onProgress })
  * => Promise<{ text, confidence, timingMs, wordCount, characterCount }>
  */
 
-/**
- * Preprocesses an image before OCR to improve accuracy across varied
- * fonts/photo quality. Three things that consistently help Tesseract:
- *  1. Grayscale — color information is noise for text recognition.
- *  2. Contrast boost — faint/low-contrast text (photos, screenshots
- *     of low-quality scans) is the #1 cause of missed characters.
- *  3. Upscaling small images — Tesseract's model was trained on
- *     reasonably sized text; tiny source images lose detail before
- *     recognition even starts.
- * This does NOT fix decorative/cursive/script fonts — that's a
- * genuine model limitation, not an image-quality problem (see note
- * below).
- */
 async function preprocessImage(imageSource) {
   const img = await loadImage(imageSource);
 
-  // Upscale if the image is small — recognition quality drops fast
-  // below ~1000px on the longer side.
   const scale = img.width < 1000 ? 1000 / img.width : 1;
   const width = Math.round(img.width * scale);
   const height = Math.round(img.height * scale);
@@ -37,22 +23,49 @@ async function preprocessImage(imageSource) {
 
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
+  const pixelCount = width * height;
 
-  // Convert to grayscale, then stretch contrast so faint text becomes
-  // solidly dark and the background becomes solidly light.
-  let min = 255, max = 0;
-  const grayValues = new Uint8ClampedArray(width * height);
-  for (let i = 0; i < data.length; i += 4) {
-    const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-    grayValues[i / 4] = gray;
-    if (gray < min) min = gray;
-    if (gray > max) max = gray;
+  // Step 1: grayscale
+  const gray = new Uint8ClampedArray(pixelCount);
+  for (let i = 0; i < pixelCount; i++) {
+    const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+    gray[i] = r * 0.299 + g * 0.587 + b * 0.114;
   }
 
-  const range = Math.max(1, max - min); // avoid divide-by-zero on blank images
-  for (let i = 0; i < data.length; i += 4) {
-    const stretched = ((grayValues[i / 4] - min) / range) * 255;
-    data[i] = data[i + 1] = data[i + 2] = stretched;
+  // Step 2: Otsu's method — finds the statistically optimal threshold
+  // to split pixels into "text" vs "background", rather than a fixed
+  // guess. Meaningfully more robust than plain contrast stretching for
+  // uneven lighting, low-contrast photos, or bold/heavy fonts, since it
+  // adapts to each image's actual pixel distribution instead of
+  // assuming one fixed cutoff works for every image.
+  const histogram = new Array(256).fill(0);
+  for (let i = 0; i < pixelCount; i++) histogram[gray[i]]++;
+
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * histogram[t];
+
+  let sumBackground = 0, weightBackground = 0, maxVariance = 0, threshold = 0;
+  for (let t = 0; t < 256; t++) {
+    weightBackground += histogram[t];
+    if (weightBackground === 0) continue;
+    const weightForeground = pixelCount - weightBackground;
+    if (weightForeground === 0) break;
+
+    sumBackground += t * histogram[t];
+    const meanBackground = sumBackground / weightBackground;
+    const meanForeground = (sum - sumBackground) / weightForeground;
+    const variance = weightBackground * weightForeground * (meanBackground - meanForeground) ** 2;
+
+    if (variance > maxVariance) {
+      maxVariance = variance;
+      threshold = t;
+    }
+  }
+
+  // Step 3: apply the threshold — pure black text, pure white background.
+  for (let i = 0; i < pixelCount; i++) {
+    const value = gray[i] > threshold ? 255 : 0;
+    data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = value;
   }
 
   ctx.putImageData(imageData, 0, 0);
