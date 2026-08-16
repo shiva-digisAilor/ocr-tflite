@@ -5,12 +5,18 @@ import {
   RECOGNIZER_INPUT_MAX_WIDTH,
   REC_NORMALIZE_MEAN,
   REC_NORMALIZE_STD,
+  SWAP_RB_CHANNELS,
 } from "./constants";
 import { imageToCanvas, canvasToImageData } from "./imageUtils";
 
 // Resizes a cropped text-line image to the recognizer's fixed height
 // (keeping aspect ratio), then pads the width out to a fixed max —
 // PaddleOCR-style recognizers expect a consistent input width.
+//
+// Padding is BLACK, not white: PaddleOCR's recognizers are trained
+// with zero-value padding. Feeding white (a pixel pattern the model
+// never saw in training) causes it to hallucinate garbage characters
+// in the padded region instead of correctly staying silent there.
 function preprocessCrop(cropCanvas) {
   const aspectRatio = cropCanvas.width / cropCanvas.height;
   let targetWidth = Math.round(RECOGNIZER_INPUT_HEIGHT * aspectRatio);
@@ -18,13 +24,11 @@ function preprocessCrop(cropCanvas) {
 
   const resizedCanvas = imageToCanvas(cropCanvas, targetWidth, RECOGNIZER_INPUT_HEIGHT);
 
-  // Pad to the full max width with white so every batch has an
-  // identical tensor shape, regardless of how wide the text line was.
   const paddedCanvas = document.createElement("canvas");
   paddedCanvas.width = RECOGNIZER_INPUT_MAX_WIDTH;
   paddedCanvas.height = RECOGNIZER_INPUT_HEIGHT;
   const ctx = paddedCanvas.getContext("2d");
-  ctx.fillStyle = "white";
+  ctx.fillStyle = "black";
   ctx.fillRect(0, 0, RECOGNIZER_INPUT_MAX_WIDTH, RECOGNIZER_INPUT_HEIGHT);
   ctx.drawImage(resizedCanvas, 0, 0);
 
@@ -33,27 +37,33 @@ function preprocessCrop(cropCanvas) {
   const floatData = new Float32Array(3 * channelSize);
 
   for (let pixel = 0; pixel < channelSize; pixel++) {
-    const r = data[pixel * 4] / 255;
-    const g = data[pixel * 4 + 1] / 255;
-    const b = data[pixel * 4 + 2] / 255;
-    // NCHW layout (matches the detector — same conversion pipeline
-    // produced both models, so both expect channels-first), using the
-    // recognizer's own 0.5/0.5 normalization, not the detector's
-    // ImageNet stats.
+    let r = data[pixel * 4] / 255;
+    let g = data[pixel * 4 + 1] / 255;
+    let b = data[pixel * 4 + 2] / 255;
+    if (SWAP_RB_CHANNELS) {
+      [r, b] = [b, r];
+    }
     floatData[pixel] = (r - REC_NORMALIZE_MEAN[0]) / REC_NORMALIZE_STD[0];
     floatData[channelSize + pixel] = (g - REC_NORMALIZE_MEAN[1]) / REC_NORMALIZE_STD[1];
     floatData[2 * channelSize + pixel] = (b - REC_NORMALIZE_MEAN[2]) / REC_NORMALIZE_STD[2];
   }
 
-  return new Tensor(floatData, [1, 3, RECOGNIZER_INPUT_HEIGHT, RECOGNIZER_INPUT_MAX_WIDTH]);
+  return {
+    tensor: new Tensor(floatData, [1, 3, RECOGNIZER_INPUT_HEIGHT, RECOGNIZER_INPUT_MAX_WIDTH]),
+    // Fraction of the padded canvas that is REAL content vs padding —
+    // used below to ignore whatever the model outputs for the padded
+    // portion. A second layer of protection beyond the color fix above.
+    contentRatio: targetWidth / RECOGNIZER_INPUT_MAX_WIDTH,
+  };
 }
 
 // Runs the recognizer on one cropped text-line image and returns the
-// raw per-timestep class scores. CTC decoding into actual characters
-// happens separately, in ctcDecoder.js.
+// raw per-timestep class scores, TRUNCATED to only the timesteps that
+// correspond to real (non-padded) content. CTC decoding into actual
+// characters happens separately, in ctcDecoder.js.
 export async function runTextRecognizer(cropCanvas) {
   const model = await getRecognizerModel();
-  const inputTensor = preprocessCrop(cropCanvas);
+  const { tensor: inputTensor, contentRatio } = preprocessCrop(cropCanvas);
 
   const results = await model.run(inputTensor);
   const outputData = await results[0].data();
@@ -67,15 +77,11 @@ export async function runTextRecognizer(cropCanvas) {
   } else if (results[0].shape) {
     outputShape = results[0].shape;
   } else if (typeof model.getOutputDetails === "function") {
-    // Documented, model-level way to get shape info per output tensor.
     const outputDetails = model.getOutputDetails();
     outputShape = outputDetails?.[0]?.shape;
   }
 
   if (!outputShape) {
-    // We've now tried every documented approach. Dump the raw object
-    // so its real shape/keys are visible in the browser console —
-    // that tells us definitively what this build actually returns.
     console.error("Could not determine output shape. Raw result tensor:", results[0]);
     console.error("Model output details:", model.getOutputDetails?.());
     throw new Error(
@@ -88,5 +94,5 @@ export async function runTextRecognizer(cropCanvas) {
   inputTensor.delete();
   results.forEach((tensor) => tensor.delete());
 
-  return { outputData, outputShape };
+  return { outputData, outputShape, contentRatio };
 }

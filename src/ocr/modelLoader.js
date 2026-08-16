@@ -44,10 +44,16 @@ export async function getDictionary() {
   if (!dictionary) {
     const response = await fetch(MODEL_PATHS.dictionary);
     const text = await response.text();
-    // One character per line, in class-index order. Index 0 is
-    // reserved for the CTC blank token, so an empty string is padded
-    // in at position 0 to keep indices aligned with the model output.
-    dictionary = ["", ...text.split("\n").filter((line) => line.length > 0)];
+    const characters = text.split("\n").filter((line) => line.length > 0);
+
+    // PaddleOCR's convention: index 0 = CTC blank, indices 1..N = the
+    // characters listed in the dict file, and index N+1 = space —
+    // added programmatically, NOT listed as a line in the dict file
+    // itself. Confirmed by checking ppocrv5_dict.txt directly: it
+    // contains no space entry, yet the model still predicts word
+    // spacing as its own class. Skipping this line is why every word
+    // ran together with no spaces.
+    dictionary = ["", ...characters, " "];
   }
   return dictionary;
 }

@@ -1,4 +1,4 @@
-import { DETECTION_BINARY_THRESHOLD, MIN_BOX_SIZE } from "./constants";
+import { DETECTION_BINARY_THRESHOLD, MIN_BOX_SIZE, UNCLIP_PAD_X_RATIO, UNCLIP_PAD_Y_RATIO } from "./constants";
 
 // Turns the detector's raw probability map into a list of axis-aligned
 // text boxes, in ORIGINAL image coordinates.
@@ -10,7 +10,7 @@ import { DETECTION_BINARY_THRESHOLD, MIN_BOX_SIZE } from "./constants";
 // bounding box instead — works well for normal horizontal text, less
 // well for heavily rotated/skewed text. Reasonable trade-off to get a
 // working pipeline quickly; can be upgraded later.
-export function postprocessDetections({ probabilityMap, mapWidth, mapHeight, scaleX, scaleY }) {
+export function postprocessDetections({ probabilityMap, mapWidth, mapHeight, scale, offsetX, offsetY }) {
   const visited = new Uint8Array(mapWidth * mapHeight);
   const boxes = [];
 
@@ -48,12 +48,37 @@ export function postprocessDetections({ probabilityMap, mapWidth, mapHeight, sca
       const height = maxY - minY;
       if (width < MIN_BOX_SIZE || height < MIN_BOX_SIZE) continue;
 
-      // Scale from detector-map coordinates back to the original image.
+      // UNCLIP STEP: DB-style detectors are trained to predict a
+      // deliberately SHRUNK region around each text blob, not its true
+      // size. Official postprocessing expands each box afterward to
+      // recover the real size — otherwise text gets clipped at the edges.
+      //
+      // Both paddings are scaled off HEIGHT (a stable proxy for font
+      // size), not each box's own width — width varies enormously
+      // between a 1-character box and a 5-word box, so padding
+      // relative to width either over- or under-pads inconsistently.
+      //
+      // X can be generous (recovers shrunk glyph width; slightly
+      // touching the next word on the same line is harmless — see
+      // joinRegionsByLine in runOcr.js). Y must stay tight: with normal
+      // line spacing, over-expanding vertically pulls in pixels from
+      // the line above/below and corrupts recognition from the very
+      // first character.
+      const padX = height * UNCLIP_PAD_X_RATIO;
+      const padY = height * UNCLIP_PAD_Y_RATIO;
+      const unclippedMinX = Math.max(0, minX - padX);
+      const unclippedMinY = Math.max(0, minY - padY);
+      const unclippedMaxX = Math.min(mapWidth, maxX + padX);
+      const unclippedMaxY = Math.min(mapHeight, maxY + padY);
+
+      // Map from detector-map (letterboxed, padded) coordinates back to
+      // the ORIGINAL image: subtract the padding offset first, then
+      // undo the uniform scale factor.
       boxes.push({
-        x: Math.round(minX * scaleX),
-        y: Math.round(minY * scaleY),
-        width: Math.round(width * scaleX),
-        height: Math.round(height * scaleY),
+        x: Math.round((unclippedMinX - offsetX) / scale),
+        y: Math.round((unclippedMinY - offsetY) / scale),
+        width: Math.round((unclippedMaxX - unclippedMinX) / scale),
+        height: Math.round((unclippedMaxY - unclippedMinY) / scale),
       });
     }
   }

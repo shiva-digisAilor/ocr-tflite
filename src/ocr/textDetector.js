@@ -1,20 +1,16 @@
 import { getDetectorModel } from "./modelLoader";
-import { preprocessToTensor } from "./preprocess";
+import { preprocessToTensorLetterboxed } from "./preprocess";
 import { DETECTOR_INPUT_SIZE } from "./constants";
 
 // Runs the detection model on the full image and returns the raw
 // probability map (one value per pixel — "how likely is this text?"),
-// plus the scale factors needed to map boxes back to the original
-// image's coordinate space.
+// plus the scale/offset needed to map boxes back to the original
+// image's coordinate space (accounting for letterbox padding).
 export async function runTextDetector(sourceImage) {
   const model = await getDetectorModel();
 
-  const originalWidth = sourceImage.width;
-  const originalHeight = sourceImage.height;
-
-  const inputTensor = preprocessToTensor(
+  const { tensor: inputTensor, scale, offsetX, offsetY } = preprocessToTensorLetterboxed(
     sourceImage,
-    DETECTOR_INPUT_SIZE,
     DETECTOR_INPUT_SIZE
   );
 
@@ -30,7 +26,8 @@ export async function runTextDetector(sourceImage) {
     probabilityMap,
     mapWidth: DETECTOR_INPUT_SIZE,
     mapHeight: DETECTOR_INPUT_SIZE,
-    scaleX: originalWidth / DETECTOR_INPUT_SIZE,
-    scaleY: originalHeight / DETECTOR_INPUT_SIZE,
+    scale,
+    offsetX,
+    offsetY,
   };
 }
