@@ -18,7 +18,7 @@ export default function OCRButton({ hasImage, isProcessing, onClick }) {
         ) : (
           <>
             <Sparkles size={20} />
-            <span>Recognize Text</span>
+            <span>Extract Text</span>
           </>
         )}
       </button>

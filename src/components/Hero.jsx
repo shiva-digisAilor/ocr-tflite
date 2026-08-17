@@ -7,11 +7,11 @@ export default function Hero() {
         <div className="hero-eyebrow">IMAGE → TEXT</div>
         
         <h1 className="hero-title">
-          Turn your images into<span className="hero-accent"> text</span>.
+          Turn your images into<span className="hero-accent"> clean text</span>.
         </h1>
         
         <p className="hero-subtitle">
-          Fast, simple, and ready for browser-based OCR.
+          Lightning-fast OCR for documents, notes, and screenshots.
         </p>
 
         {/* Decorative animated accent */}

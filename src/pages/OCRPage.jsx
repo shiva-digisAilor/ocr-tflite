@@ -22,8 +22,38 @@ export default function OCRPage() {
   const [extractedText, setExtractedText] = useState('');
   const [sampleTitle, setSampleTitle] = useState('');
   const [confidence, setConfidence] = useState(null);
+  const [view, setView] = useState('ocr');
+  const [selectedHistoryEntry, setSelectedHistoryEntry] = useState(null);
+  const [historyItems, setHistoryItems] = useState(() => {
+    try {
+      const saved = localStorage.getItem('text-extractor-history');
+      return saved ? JSON.parse(saved) : [];
+    } catch (error) {
+      console.error('Failed to load history:', error);
+      return [];
+    }
+  });
 
   const [toasts, setToasts] = useState([]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('text-extractor-history', JSON.stringify(historyItems.slice(0, 8)));
+    } catch (error) {
+      console.error('Failed to save history:', error);
+    }
+  }, [historyItems]);
+
+  const formatHistoryDate = (dateString) => {
+    if (!dateString) return 'Recent extraction';
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('en', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    }).format(date);
+  };
 
   // Generate object URL when image selection changes
   useEffect(() => {
@@ -47,6 +77,34 @@ export default function OCRPage() {
 
   const removeToast = (id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  const saveToHistory = (text) => {
+    const cleanText = (text || '').trim();
+    if (!cleanText) return;
+
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      text: cleanText,
+      createdAt: new Date().toISOString()
+    };
+
+    setHistoryItems((prev) => {
+      const filtered = prev.filter((item) => item.text !== cleanText);
+      return [entry, ...filtered].slice(0, 8);
+    });
+  };
+
+  const handleNavigate = (nextView) => {
+    setView(nextView);
+    if (nextView !== 'history-detail') {
+      setSelectedHistoryEntry(null);
+    }
+  };
+
+  const handleHistoryOpen = (entry) => {
+    setSelectedHistoryEntry(entry);
+    setView('history-detail');
   };
 
   const handleImageSelected = async (file) => {
@@ -126,6 +184,7 @@ export default function OCRPage() {
       setExtractedText(finalText);
       setSampleTitle('');
       setConfidence(avgConfidence);
+      saveToHistory(finalText);
       addToast('Text recognized successfully!', 'success', 3500);
     } catch (err) {
       console.error('OCR error:', err);
@@ -144,57 +203,194 @@ export default function OCRPage() {
     addToast('Extracted text cleared', 'info', 2500);
   };
 
-  return (
-    <div className="app-container">
-      <Navbar />
-      <Hero />
+  const deleteHistoryItem = (id) => {
+    setHistoryItems((prev) => prev.filter((item) => item.id !== id));
+    if (selectedHistoryEntry && selectedHistoryEntry.id === id) {
+      setSelectedHistoryEntry(null);
+      setView('history');
+    }
+  };
 
-      <main className="main-content">
-        <div className="workspace-grid">
-          {/* Left Column: Image Input / Preview */}
-          <div className="workspace-column">
-            {!previewUrl ? (
-              <ImageUploader
-                onImageSelected={handleImageSelected}
-                onError={(err) => addToast(err, 'error')}
-              />
-            ) : (
-              <ImagePreview
-                imageFile={imageFile}
-                previewUrl={previewUrl}
-                onRemove={handleRemoveImage}
-                onSelectAnother={() => setImageFile(null)}
-              />
-            )}
+  const deleteAllHistory = () => {
+    setHistoryItems([]);
+    setSelectedHistoryEntry(null);
+    setView('history');
+  };
 
-            <OCRButton
-              hasImage={!!previewUrl}
-              isProcessing={isProcessing}
-              onClick={handleRunOCR}
-            />
+  const renderHistoryList = () => (
+    <div className="history-page">
+      <div className="history-header-row">
+        <div>
+          <p className="history-kicker">Saved records</p>
+          <h2 className="history-title">Extraction History</h2>
+        </div>
+        <div className="history-header-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => handleNavigate('ocr')}
+          >
+            Back to workspace
+          </button>
+          {historyItems.length > 0 && (
+            <button
+              type="button"
+              className="danger-button"
+              onClick={deleteAllHistory}
+            >
+              Delete all
+            </button>
+          )}
+        </div>
+      </div>
+
+      {historyItems.length === 0 ? (
+        <div className="history-empty-state">
+          <p>No saved extractions yet.</p>
+          <span>Run OCR once and it will appear here.</span>
+        </div>
+      ) : (
+        <div className="history-list">
+          {historyItems.map((item) => (
+            <div
+              key={item.id}
+              className="history-item-card"
+              onClick={() => handleHistoryOpen(item)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  handleHistoryOpen(item);
+                }
+              }}
+            >
+              <div className="history-item-topline">
+                <span>{formatHistoryDate(item.createdAt)}</span>
+                <span>{(item.text || '').trim().split(/\s+/).filter(Boolean).length} words</span>
+              </div>
+              <p className="history-item-preview">{(item.text || '').replace(/\s+/g, ' ').trim().slice(0, 220) || 'No text available'}</p>
+              <div className="history-card-actions">
+                <button
+                  type="button"
+                  className="history-delete-button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    deleteHistoryItem(item.id);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderHistoryDetail = () => {
+    if (!selectedHistoryEntry) {
+      return renderHistoryList();
+    }
+
+    return (
+      <div className="history-detail-page">
+        <div className="history-header-row">
+          <div>
+            <p className="history-kicker">Saved record</p>
+            <h2 className="history-title">Full extracted text</h2>
           </div>
-
-          {/* Right Column: OCR Result / Loading state */}
-          <div className="workspace-column">
-            {isProcessing ? (
-              <LoadingState
-                progressMessage={progressMessage}
-                progressPercent={progressPercent}
-              />
-            ) : (
-              <OCRResult
-                text={extractedText}
-                onTextChange={setExtractedText}
-                onClear={handleClearResult}
-                sampleTitle={sampleTitle}
-                confidence={confidence}
-              />
-            )}
+          <div className="history-header-actions">
+            <button type="button" className="secondary-button" onClick={() => handleNavigate('history')}>
+              Back to history
+            </button>
+            <button
+              type="button"
+              className="danger-button"
+              onClick={() => deleteHistoryItem(selectedHistoryEntry.id)}
+            >
+              Delete
+            </button>
           </div>
         </div>
-      </main>
 
-      {/* Toast Notification Container */}
+        <div className="history-detail-meta">
+          <span>{formatHistoryDate(selectedHistoryEntry.createdAt)}</span>
+          <span>{(selectedHistoryEntry.text || '').trim().split(/\s+/).filter(Boolean).length} words</span>
+        </div>
+
+        <textarea
+          className="history-detail-textarea"
+          value={selectedHistoryEntry.text || ''}
+          readOnly
+          spellCheck="false"
+        />
+      </div>
+    );
+  };
+
+  return (
+    <div className="app-container">
+      <Navbar
+        activeView={view}
+        historyCount={historyItems.length}
+        onNavigate={handleNavigate}
+      />
+
+      {view === 'ocr' ? (
+        <>
+          <Hero />
+
+          <main className="main-content">
+            <div className="workspace-grid">
+              <div className="workspace-column">
+                {!previewUrl ? (
+                  <ImageUploader
+                    onImageSelected={handleImageSelected}
+                    onError={(err) => addToast(err, 'error')}
+                  />
+                ) : (
+                  <ImagePreview
+                    imageFile={imageFile}
+                    previewUrl={previewUrl}
+                    onRemove={handleRemoveImage}
+                    onSelectAnother={() => setImageFile(null)}
+                  />
+                )}
+
+                <OCRButton
+                  hasImage={!!previewUrl}
+                  isProcessing={isProcessing}
+                  onClick={handleRunOCR}
+                />
+              </div>
+
+              <div className="workspace-column">
+                {isProcessing ? (
+                  <LoadingState
+                    progressMessage={progressMessage}
+                    progressPercent={progressPercent}
+                  />
+                ) : (
+                  <OCRResult
+                    text={extractedText}
+                    onTextChange={setExtractedText}
+                    onClear={handleClearResult}
+                    sampleTitle={sampleTitle}
+                    confidence={confidence}
+                  />
+                )}
+              </div>
+            </div>
+          </main>
+        </>
+      ) : (
+        <main className="main-content history-main-content">
+          {view === 'history' ? renderHistoryList() : renderHistoryDetail()}
+        </main>
+      )}
+
       <Toast toasts={toasts} onDismiss={removeToast} />
     </div>
   );

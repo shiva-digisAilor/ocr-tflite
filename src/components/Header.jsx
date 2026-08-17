@@ -11,13 +11,13 @@ export default function Header() {
           </div>
           <div className="brand-info">
             <h1 className="brand-title">
-              OCR Scanner
+              Text Extractor Pro
               <span className="brand-badge">
                 <Sparkles size={10} style={{ display: 'inline', marginRight: '3px' }} />
                 Browser AI
               </span>
             </h1>
-            <p className="brand-subtitle">Extract text directly from your image</p>
+            <p className="brand-subtitle">Extract text from photos, scans, and screenshots</p>
           </div>
         </div>
       </div>
