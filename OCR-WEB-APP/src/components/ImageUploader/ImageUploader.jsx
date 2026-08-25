@@ -1,5 +1,11 @@
 import { useRef } from 'react';
 
+// A file counts as uploadable if it's an image OR a PDF.
+function isAcceptedFile(file) {
+  if (!file) return false;
+  return file.type.startsWith('image/') || file.type === 'application/pdf';
+}
+
 export default function ImageUploader({ onFileSelected, disabled }) {
   const inputRef = useRef(null);
 
@@ -16,7 +22,7 @@ export default function ImageUploader({ onFileSelected, disabled }) {
     e.preventDefault();
     if (disabled) return;
     const file = e.dataTransfer.files?.[0];
-    if (file && file.type.startsWith('image/')) {
+    if (isAcceptedFile(file)) {
       onFileSelected(file);
     }
   }
@@ -35,7 +41,7 @@ export default function ImageUploader({ onFileSelected, disabled }) {
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,application/pdf"
         onChange={handleChange}
         disabled={disabled}
         hidden
@@ -43,9 +49,9 @@ export default function ImageUploader({ onFileSelected, disabled }) {
       <div className="uploader__content">
         <div className="uploader__icon">📷</div>
         <p className="uploader__text">
-          {disabled ? 'Please wait…' : 'Click or drop an image here'}
+          {disabled ? 'Please wait…' : 'Click or drop an image or PDF here'}
         </p>
-        <p className="uploader__hint">Supports JPG, PNG, WebP, etc.</p>
+        <p className="uploader__hint">Supports JPG, PNG, WebP, PDF, etc.</p>
       </div>
     </div>
   );
