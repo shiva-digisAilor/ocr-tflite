@@ -66,6 +66,15 @@ function coerceLetters(zone) {
 
 // ---- Line discovery --------------------------------------------------------
 
+// How "MRZ-like" a cleaned candidate string is: closer to 44 chars and
+// denser with '<' fillers scores higher. Used to pick the best pair when
+// line order can't be trusted (rotated scans, stray text near the MRZ).
+function mrzLikelihood(s) {
+  const lengthScore = 1 - Math.min(Math.abs(s.length - 44), 14) / 14;
+  const fillerRatio = (s.match(/</g) || []).length / s.length;
+  return lengthScore * 0.6 + Math.min(fillerRatio / 0.3, 1) * 0.4;
+}
+
 /**
  * Scan raw OCR line strings for the two TD3 MRZ lines. Returns
  * { line1, line2, sourceLines } or null if nothing MRZ-like was found.
@@ -74,38 +83,75 @@ function coerceLetters(zone) {
  * detected them (top-to-bottom), which is what result.location gives us.
  */
 export function findMrzLines(lines) {
-  const cleaned = lines
-    .map((raw) => String(raw || '').toUpperCase().replace(/\s+/g, ''))
-    // keep only MRZ-legal characters
-    .map((s) => s.replace(/[^A-Z0-9<]/g, ''));
+  // Split into whitespace tokens BEFORE stripping spaces. Real MRZ text
+  // never contains a space, but noisy OCR often merges the MRZ with
+  // trailing garbage (a barcode string, "File No.", an old-passport date)
+  // onto the same detected line with a space in between. If we strip
+  // spaces first, that garbage gets welded onto the MRZ and the combined
+  // string blows past the ~44-char window, so the whole line was
+  // previously rejected outright. Scoring tokens individually recovers
+  // the clean MRZ substring even when it's buried in a longer noisy line.
+  const candidates = [];
+  lines.forEach((raw, idx) => {
+    const line = String(raw || '');
+    const tokens = line.split(/\s+/).filter(Boolean);
+    // Also keep the whole line (space-stripped) as a fallback candidate,
+    // for the normal case where PaddleOCR detected the MRZ as its own
+    // clean line with no adjacent junk.
+    const wholeLine = line.replace(/\s+/g, '');
+    const pool = tokens.length > 1 ? [...tokens, wholeLine] : [wholeLine];
 
-  const candidates = cleaned
-    .map((s, idx) => ({ s, idx }))
-    // MRZ lines are long, dense with '<' fillers, and close to 44 chars
-    .filter(({ s }) => s.length >= 30 && s.length <= 48 && (s.match(/</g) || []).length >= 3);
+    const seen = new Set();
+    for (const tok of pool) {
+      const cleaned = tok.toUpperCase().replace(/[^A-Z0-9<]/g, '');
+      if (seen.has(cleaned)) continue;
+      seen.add(cleaned);
+      // MRZ lines are long and close to 44 chars. Filler ('<') density is
+      // a good signal but not required - a heavily-corrupted scan can
+      // have digit noise crammed into what should be padding, so we only
+      // require at least one filler char and lean on mrzLikelihood's
+      // scoring (weighted mostly toward length) to rank real candidates
+      // above unrelated text.
+      if (cleaned.length >= 25 && cleaned.length <= 48 && (cleaned.match(/</g) || []).length >= 1) {
+        candidates.push({ s: cleaned, idx, score: mrzLikelihood(cleaned) });
+      }
+    }
+  });
 
   if (candidates.length < 2) return null;
 
   // Line 1 always starts with a document-type letter followed by '<' or
   // another letter (P<, PN, PD ...). Prefer a candidate that starts with 'P'.
-  let line1Idx = candidates.findIndex(({ s }) => /^[A-Z]</.test(s) || /^P/.test(s));
-  if (line1Idx === -1) line1Idx = 0;
+  const line1Candidates = candidates.filter(({ s }) => /^[A-Z]</.test(s) || /^P/.test(s));
+  const line1Pool = line1Candidates.length ? line1Candidates : candidates;
+  const line1 = [...line1Pool].sort((a, b) => b.score - a.score)[0];
 
-  // Line 2 is normally the very next detected line after line 1.
-  let line2Idx = candidates.findIndex(({ idx }, i) => i > line1Idx && idx === candidates[line1Idx].idx + 1);
-  if (line2Idx === -1) {
-    // fall back to "next candidate after line1 in the candidate list"
-    line2Idx = line1Idx + 1 < candidates.length ? line1Idx + 1 : -1;
+  // Line 2: prefer the detected line immediately after line1 (normal
+  // top-to-bottom scans); if that isn't MRZ-like (rotated/reordered scan),
+  // fall back to whichever remaining candidate scores best.
+  const remaining = candidates.filter((c) => c !== line1);
+  const adjacent = remaining.find((c) => c.idx === line1.idx + 1);
+  const line2 =
+    adjacent && adjacent.score > 0.4 ? adjacent : [...remaining].sort((a, b) => b.score - a.score)[0];
+
+  if (!line2) return null;
+
+  const l1 = normalizeLength(line1.s, 44);
+  const l2 = normalizeLength(line2.s, 44);
+
+  // Line 2 (passport number/dates/etc.) always starts with alnum, never '<',
+  // and line 1 always starts with a document-type letter ('P'). If we picked
+  // them backwards (can happen on rotated scans where reading order flips),
+  // swap them.
+  const looksLikeLine1 = (s) => /^[A-Z]</.test(s) || s.slice(0, 2) === 'P<';
+  if (!looksLikeLine1(l1) && looksLikeLine1(l2)) {
+    return { line1: l2, line2: l1, sourceLines: [lines[line2.idx], lines[line1.idx]] };
   }
-  if (line2Idx === -1 || line2Idx === line1Idx) return null;
-
-  const line1 = normalizeLength(candidates[line1Idx].s, 44);
-  const line2 = normalizeLength(candidates[line2Idx].s, 44);
 
   return {
-    line1,
-    line2,
-    sourceLines: [lines[candidates[line1Idx].idx], lines[candidates[line2Idx].idx]]
+    line1: l1,
+    line2: l2,
+    sourceLines: [lines[line1.idx], lines[line2.idx]]
   };
 }
 
